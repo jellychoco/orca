@@ -325,9 +325,50 @@ describe('local filesystem watcher unsubscribe cleanup', () => {
       expect(subscribeParcelWatcher).toHaveBeenCalled()
     })
     const closePromise = closeLocalWatcherForWorktreePath('/tmp/repo')
+    const closedBeforeNativeSubscribe = await Promise.race([
+      closePromise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0))
+    ])
     resolveSubscribe({ unsubscribe: unsubscribeMock })
     await Promise.all([watchPromise, closePromise])
 
+    expect(closedBeforeNativeSubscribe).toBe(true)
+    expect(unsubscribeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels an opening local watcher during app shutdown', async () => {
+    vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as never)
+    let resolveSubscribe: (subscription: { unsubscribe: () => void }) => void = () => {}
+    const unsubscribeMock = vi.fn()
+    vi.mocked(subscribeParcelWatcher).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSubscribe = resolve as typeof resolveSubscribe
+        })
+    )
+    const sender = {
+      isDestroyed: () => false,
+      send: vi.fn(),
+      once: vi.fn(),
+      id: 1
+    }
+
+    const watchPromise = handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/tmp/repo' }
+    ) as Promise<unknown>
+    await vi.waitFor(() => {
+      expect(subscribeParcelWatcher).toHaveBeenCalled()
+    })
+    const shutdownPromise = closeAllWatchers()
+    const closedBeforeNativeSubscribe = await Promise.race([
+      shutdownPromise.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0))
+    ])
+    resolveSubscribe({ unsubscribe: unsubscribeMock })
+    await Promise.all([watchPromise, shutdownPromise])
+
+    expect(closedBeforeNativeSubscribe).toBe(true)
     expect(unsubscribeMock).toHaveBeenCalledTimes(1)
   })
 })
